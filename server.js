@@ -4,16 +4,34 @@ const session = require('express-session');
 const admin = require('firebase-admin');
 const app = express();
 
-// 1. Inicializar Firebase Admin
-// Certifique-se de que o arquivo "firebase-key.json" está na mesma pasta que este server.js
-const serviceAccount = require("./firebase-key.json");
+// --- INICIALIZAÇÃO SEGURA DO FIREBASE ---
+let serviceAccount;
 
-admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: "https://aulas1-9044b-default-rtdb.firebaseio.com/"
-});
+if (process.env.FIREBASE_KEY) {
+    // Se estiver no RENDER, ele lê a variável de ambiente
+    try {
+        serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+    } catch (e) {
+        console.error("Erro ao converter a FIREBASE_KEY para JSON:", e);
+    }
+} else {
+    // Se estiver no seu computador (localhost), ele continua lendo o arquivo
+    // Certifique-se que o nome do arquivo aqui é EXATAMENTE o que você tem na pasta
+    serviceAccount = require("./firebase-key.json");
+}
+
+if (serviceAccount) {
+    admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        databaseURL: "https://aulas1-9044b-default-rtdb.firebaseio.com/"
+    });
+    console.log("🔥 Firebase configurado com sucesso.");
+}
 
 const db = admin.database();
+// --- FIM DA INICIALIZAÇÃO ---
+
+// Continue com o restante do seu código (app.use, rotas, etc...)
 
 // Configurações do Express
 app.use(express.json());
