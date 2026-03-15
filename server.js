@@ -8,36 +8,38 @@ const app = express();
 let serviceAccount;
 
 if (process.env.FIREBASE_KEY) {
-    // Se estiver no RENDER, ele lê a variável de ambiente
+    // No RENDER: lê a variável de ambiente (String JSON)
     try {
         serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
     } catch (e) {
         console.error("Erro ao converter a FIREBASE_KEY para JSON:", e);
     }
 } else {
-    // Se estiver no seu computador (localhost), ele continua lendo o arquivo
-    // Certifique-se que o nome do arquivo aqui é EXATAMENTE o que você tem na pasta
-    serviceAccount = require("./firebase-key.json");
+    // No seu PC (localhost): tenta ler o arquivo local
+    try {
+        serviceAccount = require("./firebase-key.json");
+    } catch (e) {
+        console.log("Aviso: Arquivo firebase-key.json não encontrado localmente.");
+    }
 }
 
 if (serviceAccount) {
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        databaseURL: "https://aulas1-9044b-default-rtdb.firebaseio.com/"
-    });
+    // Evita reinicializar o Firebase se ele já estiver ativo
+    if (!admin.apps.length) {
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+            databaseURL: "https://aulas1-9044b-default-rtdb.firebaseio.com/"
+        });
+    }
     console.log("🔥 Firebase configurado com sucesso.");
 }
 
 const db = admin.database();
-// --- FIM DA INICIALIZAÇÃO ---
 
-// Continue com o restante do seu código (app.use, rotas, etc...)
-
-// Configurações do Express
+// --- CONFIGURAÇÕES DO EXPRESS ---
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Configuração de Sessão (15 minutos)
 app.use(session({
     secret: 'segredo-capoeira',
     resave: true,
@@ -46,14 +48,13 @@ app.use(session({
     cookie: { maxAge: 900000 } // 15 minutos
 }));
 
-// Rota Principal de Login
+// --- ROTAS PRINCIPAIS ---
+
 app.get('/auth', (req, res) => {
     res.sendFile(path.join(__dirname, 'views/index.html'));
 });
 
-// LOGIN DIRETO DO FIREBASE
 app.post('/index', async (req, res) => {
-    // Pegamos os dados e limpamos espaços extras
     const user = req.body.user ? req.body.user.trim().toLowerCase() : "";
     const pass = req.body.pass ? String(req.body.pass).trim() : "";
 
@@ -67,8 +68,6 @@ app.post('/index', async (req, res) => {
         if (usuarios) {
             for (let id in usuarios) {
                 const u = usuarios[id];
-
-                // Preparando dados do banco para comparação idêntica
                 const dbUser = u.username ? String(u.username).trim().toLowerCase() : "";
                 const dbEmail = u.email ? String(u.email).trim().toLowerCase() : "";
                 const dbPass = u.password ? String(u.password).trim() : "";
@@ -81,24 +80,20 @@ app.post('/index', async (req, res) => {
         }
 
         if (usuarioEncontrado) {
-            // Se no banco estiver "professor.html", salva apenas "professor"
             const tipo = usuarioEncontrado.rota.split('.')[0];
             req.session.tipo = tipo;
             req.session.nome = usuarioEncontrado.username;
-
-            console.log(`✅ Sucesso: ${req.session.nome} logado como ${tipo}`);
             res.json({ success: true, redirect: `/auth/${tipo}` });
         } else {
-            console.log(`❌ Falha: Credenciais incorretas para "${user}"`);
             res.status(401).json({ success: false, message: "Dados incorretos" });
         }
     } catch (error) {
-        console.error("Erro no servidor:", error);
         res.status(500).json({ success: false });
     }
 });
 
-// API para a página saber quem está logado
+// --- API E LOGOUT ---
+
 app.get('/api/usuario-logado', (req, res) => {
     if (req.session.nome) {
         res.json({ nome: req.session.nome });
@@ -107,16 +102,13 @@ app.get('/api/usuario-logado', (req, res) => {
     }
 });
 
-// Rota de Logout
 app.get('/sair', (req, res) => {
     req.session.destroy();
     res.redirect('/auth');
 });
 
-// Proteção de Rota Genérica (Ex: /auth/professor, /auth/aluno)
 app.get('/auth/:pagina', (req, res) => {
     const pagina = req.params.pagina;
-    // Só deixa entrar se o tipo na sessão for igual à página pedida
     if (req.session.tipo === pagina) {
         res.sendFile(path.join(__dirname, `views/${pagina}.html`));
     } else {
@@ -124,24 +116,8 @@ app.get('/auth/:pagina', (req, res) => {
     }
 });
 
-// Monitor de Conexão Firebase
-db.ref('.info/connected').on('value', (snap) => {
-    if (snap.val() === true) {
-        console.log("✅ CONECTADO AO FIREBASE!");
-    } else {
-        console.log("❌ DESCONECTADO DO FIREBASE!");
-    }
-});
+// --- ROTAS DE RECUPERAÇÃO E CADASTRO ---
 
-//
-//
-//
-//
-
-// --- ROTAS DE RECUPERAÇÃO DE SENHA ---
-// --- NOVAS ROTAS PARA RECUPERAÇÃO DE SENHA ---
-
-// 1. Verificar se o e-mail existe no Firebase e retornar a chave do usuário
 app.post('/api/buscar-usuario-por-email', async (req, res) => {
     const { email } = req.body;
     try {
@@ -152,7 +128,7 @@ app.post('/api/buscar-usuario-por-email', async (req, res) => {
         if (usuarios) {
             for (let key in usuarios) {
                 if (usuarios[key].email === email) {
-                    userKey = key; // Nome de usuário/Chave no Firebase
+                    userKey = key;
                     break;
                 }
             }
@@ -168,57 +144,44 @@ app.post('/api/buscar-usuario-por-email', async (req, res) => {
     }
 });
 
-// 2. Atualizar a senha (sobrescrever a antiga)
 app.post('/api/atualizar-senha', async (req, res) => {
     const { userKey, newPass } = req.body;
     try {
-        // O Firebase Admin usa .update para mudar apenas o campo password
-        await db.ref(`usuarios/${userKey}`).update({
-            password: newPass
-        });
+        await db.ref(`usuarios/${userKey}`).update({ password: newPass });
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ success: false });
     }
 });
 
-//
-//
-//
-//
-// --- ROTA DE CADASTRO ---
 app.post('/api/cadastrar-usuario', async (req, res) => {
     const { username, password, email, nome, telefone, rota } = req.body;
-    
     try {
-        // Referência para o novo usuário usando o username como chave (ex: usuarios/admin)
         const userRef = db.ref('usuarios/' + username);
-        
-        // Verifica se o username já existe para não sobrescrever
         const snapshot = await userRef.once('value');
         if (snapshot.exists()) {
             return res.status(400).json({ success: false, message: "Este nome de usuário já está em uso." });
         }
-
-        // Grava os dados no Firebase conforme sua estrutura
         await userRef.set({
-            username: username,
-            password: password,
-            email: email,
-            nome: nome,
-            telefone: telefone,
-            rota: rota || "aluno.html", // Define uma rota padrão caso não venha no corpo
+            username, password, email, nome, telefone,
+            rota: rota || "aluno.html",
             dataCriacao: new Date().toISOString()
         });
-
-        console.log(`✅ Novo usuário cadastrado: ${username}`);
         res.json({ success: true });
     } catch (error) {
-        console.error("Erro ao cadastrar:", error);
-        res.status(500).json({ success: false, message: "Erro interno no servidor." });
+        res.status(500).json({ success: false, message: "Erro interno." });
     }
 });
 
-app.listen(5500, () => {
-    console.log("🚀 Servidor rodando em http://localhost:5500");
+// --- MONITOR E LISTENER (PORTA CORRIGIDA) ---
+
+db.ref('.info/connected').on('value', (snap) => {
+    if (snap.val() === true) console.log("✅ CONECTADO AO FIREBASE!");
+    else console.log("❌ DESCONECTADO DO FIREBASE!");
+});
+
+// AQUI ESTÁ O AJUSTE PARA O RENDER
+const PORT = process.env.PORT || 5500;
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
