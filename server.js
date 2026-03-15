@@ -5,36 +5,38 @@ const admin = require('firebase-admin');
 const app = express();
 
 // --- INICIALIZAÇÃO SEGURA DO FIREBASE ---
-let serviceAccount;
+let serviceAccount = null;
 
 if (process.env.FIREBASE_KEY) {
-    // No RENDER: lê a variável de ambiente (String JSON)
     try {
         serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+        console.log("✅ Variável FIREBASE_KEY detectada.");
     } catch (e) {
-        console.error("Erro ao converter a FIREBASE_KEY para JSON:", e);
+        console.error("❌ Erro ao converter FIREBASE_KEY para JSON:", e.message);
     }
 } else {
-    // No seu PC (localhost): tenta ler o arquivo local
     try {
         serviceAccount = require("./firebase-key.json");
+        console.log("🏠 Usando chave local firebase-key.json");
     } catch (e) {
-        console.log("Aviso: Arquivo firebase-key.json não encontrado localmente.");
+        console.log("⚠️ Nenhuma chave encontrada (Local ou Render).");
     }
 }
 
+// SÓ INICIALIZA SE TIVER A CHAVE
 if (serviceAccount) {
-    // Evita reinicializar o Firebase se ele já estiver ativo
     if (!admin.apps.length) {
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
             databaseURL: "https://aulas1-9044b-default-rtdb.firebaseio.com/"
         });
     }
-    console.log("🔥 Firebase configurado com sucesso.");
+} else {
+    console.error("🚨 CRÍTICO: O Firebase não pôde ser inicializado!");
 }
 
-const db = admin.database();
+// IMPORTANTE: Só chame o database() APÓS o initializeApp
+const db = admin.apps.length ? admin.database() : null;
 
 // --- CONFIGURAÇÕES DO EXPRESS ---
 app.use(express.json());
